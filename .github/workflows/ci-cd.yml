@@ -1,0 +1,38 @@
+name: CI-CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run data and training pipeline
+        run: |
+          python src/generate_dataset.py
+          python src/data_loader.py
+          python src/train.py
+          python src/evaluate.py
+
+      - name: Run tests
+        run: |
+          pytest tests/
+
+      - name: Build Docker image
+        run: |
+          docker build -t nlp-text-classifier:latest .
