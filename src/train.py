@@ -1,6 +1,5 @@
 import os
 import pandas as pd
-import mlflow
 from datasets import Dataset
 from transformers import (
     AutoTokenizer,
@@ -17,7 +16,7 @@ LABEL_MAP = {"negative": 0, "neutral": 1, "positive": 2}
 ID2LABEL = {v: k for k, v in LABEL_MAP.items()}
 
 
-def tokenize_dataset(df, tokenizer, max_length=64):
+def tokenize_dataset(df, tokenizer, max_length=128):
     dataset = Dataset.from_pandas(
         df[["text", "label_id"]].rename(columns={"label_id": "label"})
     )
@@ -41,7 +40,7 @@ def train_model(
     train_path="data/train.csv",
     test_path="data/test.csv",
     model_dir="models/sentiment-bert-lora",
-    epochs=3,
+    epochs=5,
 ):
     train_df = pd.read_csv(train_path)
     test_df = pd.read_csv(test_path)
@@ -57,8 +56,8 @@ def train_model(
 
     lora_config = LoraConfig(
         task_type=TaskType.SEQ_CLS,
-        r=8,
-        lora_alpha=16,
+        r=16,
+        lora_alpha=32,
         lora_dropout=0.1,
         target_modules=["query", "value"],
     )
@@ -75,6 +74,7 @@ def train_model(
         save_strategy="no",
         logging_steps=10,
         report_to=[],
+        warmup_ratio=0.1,
     )
 
     data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
@@ -88,35 +88,17 @@ def train_model(
         compute_metrics=compute_metrics,
     )
 
-    mlflow.set_experiment("nlp-text-classifier")
+    trainer.train()
+    metrics = trainer.evaluate()
 
-    with mlflow.start_run():
-        mlflow.log_params(
-            {
-                "model_name": MODEL_NAME,
-                "lora_r": lora_config.r,
-                "lora_alpha": lora_config.lora_alpha,
-                "epochs": epochs,
-            }
-        )
+    merged_model = model.merge_and_unload()
 
-        trainer.train()
-        metrics = trainer.evaluate()
+    os.makedirs(model_dir, exist_ok=True)
+    merged_model.save_pretrained(model_dir)
+    tokenizer.save_pretrained(model_dir)
 
-        mlflow.log_metrics(
-            {k: v for k, v in metrics.items() if isinstance(v, (int, float))}
-        )
-
-        merged_model = model.merge_and_unload()
-
-        os.makedirs(model_dir, exist_ok=True)
-        merged_model.save_pretrained(model_dir)
-        tokenizer.save_pretrained(model_dir)
-
-        mlflow.log_artifacts(model_dir, artifact_path="model")
-
-        print(f"Eval accuracy: {metrics.get('eval_accuracy'):.4f}")
-        print(f"Eval F1: {metrics.get('eval_f1'):.4f}")
+    print(f"Eval accuracy: {metrics.get('eval_accuracy'):.4f}")
+    print(f"Eval F1: {metrics.get('eval_f1'):.4f}")
 
     return merged_model, metrics
 
